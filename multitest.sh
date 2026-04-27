@@ -1,42 +1,33 @@
 #!/bin/bash
 
 # ============================================================
-#  Multitest Pro v1.6 — Ultimate Edition
+#  Multitest Pro v1.7 — Anti-Freeze Edition
 # ============================================================
 
-# --- НАСТРОЙКИ TG (Опционально) ---
+# Настройки TG
 TG_CHAT_ID="-1002350577710"
 TG_THREAD_ID="2122"
-# --------------------------
 
-# 1. Сбор базовой информации для имени лога
-IP_ADDR=$(curl -s https://ipinfo.io/ip || curl -s eth0.me)
+# 1. Формируем имя лога
+IP_ADDR=$(curl -s --connect-timeout 5 https://ipinfo.io/ip || echo "no-ip")
 HOST_NAME=$(hostname)
 DATE_NOW=$(date +%Y%m%d_%H%M)
 LOG_FILE="${HOST_NAME}_${IP_ADDR}_${DATE_NOW}.log"
 
 # 2. Проверка токена
-if [ -z "$MY_TG_TOKEN" ] && [ ! -z "$1" ]; then
-    MY_TG_TOKEN="$1"
-elif [ -z "$MY_TG_TOKEN" ]; then
-    echo -e "\e[1;33mВведите токен бота (или оставьте пустым для пропуска TG):\e[0m"
-    read -p "Token: " MY_TG_TOKEN
+if [ -z "$MY_TG_TOKEN" ]; then
+    echo -e "Введите токен бота (или Enter для пропуска):"
+    read -t 10 -p "Token: " MY_TG_TOKEN # Таймаут 10 сек на ввод
 fi
 
-# Настройка логирования (дублируем всё в файл)
+# Настройка логирования
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-# Цвета для вывода в консоль
 CYAN='\033[0;36m'
-GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
 BOLD='\033[1m'
 NC='\033[0m'
-
-print_header() {
-    echo -e "${CYAN}${BOLD}>>> ЗАПУСК MULTITEST v1.6-ULTIMATE <<<${NC}"
-    echo -e "${YELLOW}Лог-файл:${NC} $LOG_FILE\n"
-}
 
 print_separator() {
     echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -44,87 +35,83 @@ print_separator() {
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 }
 
-# --- БЛОКИ ТЕСТОВ ---
+# --- ИСПРАВЛЕННЫЕ ФУНКЦИИ ---
 
 install_deps() {
-    echo -e "${CYAN}Установка зависимостей...${NC}"
-    apt-get update -qq && apt-get install -y -qq curl wget sysbench iperf3 &>/dev/null
+    print_separator "Установка зависимостей (Safe Mode)"
+    # Убираем зависания apt
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -o Acquire::ForceIPv4=true -o APT::Get::List-Cleanup=0 -qq || true
+    apt-get install -y -qq curl wget sysbench iperf3 dnsutils < /dev/null
 }
 
 run_ip_region() {
-    print_separator "IP Region & ASN"
-    bash <(wget -qO- https://ipregion.vrnt.xyz) </dev/null
+    print_separator "IP Region"
+    bash <(curl -sL https://ipregion.vrnt.xyz) </dev/null || echo "Ошибка теста"
 }
 
 run_censorcheck() {
-    print_separator "Censorcheck (Geoblock & DPI)"
-    echo "--- Geoblock Test ---"
-    bash <(wget -qO- https://github.com/vernette/censorcheck/raw/master/censorcheck.sh) --mode geoblock </dev/null
-    echo -e "\n--- DPI Test ---"
-    bash <(wget -qO- https://github.com/vernette/censorcheck/raw/master/censorcheck.sh) --mode dpi </dev/null
+    print_separator "Censorcheck"
+    bash <(curl -sL https://github.com/vernette/censorcheck/raw/master/censorcheck.sh) --mode geoblock </dev/null
+    bash <(curl -sL https://github.com/vernette/censorcheck/raw/master/censorcheck.sh) --mode dpi </dev/null
 }
 
-run_iperf3_ru() {
-    print_separator "iPerf3 Speedtest (RU Servers)"
-    bash <(wget -qO- https://github.com/itdoginfo/russian-iperf3-servers/raw/main/speedtest.sh) </dev/null
+run_ip_check_place() {
+    print_separator "IP.Check.Place"
+    # Добавляем таймаут и неинтерактивность
+    bash <(curl -sL IP.Check.Place) -l en < /dev/null || echo "Пропущено"
+}
+
+run_ip_quality() {
+    print_separator "IP Quality Check"
+    bash <(curl -sL https://Check.Place) -EI < /dev/null || echo "Пропущено"
+}
+
+run_bench_sh() {
+    print_separator "Bench.sh"
+    wget -qO- bench.sh | bash < /dev/null || echo "Пропущено"
 }
 
 run_yabs() {
     print_separator "YABS (Disk & Network)"
-    # Флаг -i отключает интерактивность, -4 только IPv4
-    curl -sL yabs.sh | bash -s -- -4 -i </dev/null
+    # Флаги -i (игнор подтверждений) и -9 (пропуск Geobench если тормозит)
+    curl -sL yabs.sh | bash -s -- -4 -i -9 < /dev/null
 }
 
-run_ip_check_place() {
-    print_separator "IP.Check.Place (Global Blocks)"
-    bash <(curl -Ls IP.Check.Place) -l en </dev/null
-}
-
-run_bench_sh() {
-    print_separator "Bench.sh (Hardware & Global Speed)"
-    wget -qO- bench.sh | bash </dev/null
-}
-
-run_ip_quality() {
-    print_separator "IP Quality Check (Check.Place)"
-    bash <(curl -Ls https://Check.Place) -EI </dev/null
+run_iperf3_ru() {
+    print_separator "iPerf3 RU"
+    bash <(curl -sL https://github.com/itdoginfo/russian-iperf3-servers/raw/main/speedtest.sh) < /dev/null
 }
 
 run_sysbench() {
-    print_separator "Sysbench CPU (Single-thread)"
-    sysbench cpu run --threads=1
+    print_separator "Sysbench CPU"
+    sysbench cpu run --threads=1 | grep -E "events per second|avg:"
 }
 
 send_to_telegram() {
     if [ ! -z "$MY_TG_TOKEN" ]; then
-        echo -e "\n${YELLOW}Отправка данных в Telegram...${NC}"
-        local message="📊 *Отчет Multitest Pro*%0A🖥 *Host:* $HOST_NAME%0A🌐 *IP:* $IP_ADDR"
-        
+        print_separator "Отправка в Telegram"
         curl -s -X POST "https://api.telegram.org/bot$MY_TG_TOKEN/sendMessage" \
             -d "chat_id=$TG_CHAT_ID" -d "message_thread_id=$TG_THREAD_ID" \
-            -d "parse_mode=Markdown" -d "text=$message" > /dev/null
-
+            -d "parse_mode=Markdown" -d "text=✅ Отчет готов: *$HOST_NAME* ($IP_ADDR)" > /dev/null
+        
         curl -s -F chat_id="$TG_CHAT_ID" -F message_thread_id="$TG_THREAD_ID" \
              -F document=@"$LOG_FILE" \
              "https://api.telegram.org/bot$MY_TG_TOKEN/sendDocument" > /dev/null
-        echo -e "${GREEN}✔ Отчет отправлен!${NC}"
     fi
 }
 
 # --- ЗАПУСК ---
-run_all() {
-    print_header
-    install_deps
-    run_ip_region
-    run_censorcheck
-    run_ip_check_place
-    run_ip_quality
-    run_bench_sh
-    run_yabs
-    run_iperf3_ru
-    run_sysbench
-    send_to_telegram
-    echo -e "\n${GREEN}${BOLD}Все тесты завершены. Лог сохранен в: $LOG_FILE${NC}"
-}
+echo -e "${CYAN}>>> Скрипт запущен. Ожидайте завершения...<<<${NC}"
+install_deps
+run_ip_region
+run_censorcheck
+run_ip_check_place
+run_ip_quality
+run_bench_sh
+run_yabs
+run_iperf3_ru
+run_sysbench
+send_to_telegram
 
-run_all
+echo -e "\n${GREEN}Готово! Лог: $LOG_FILE${NC}"
