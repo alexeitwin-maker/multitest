@@ -1,75 +1,48 @@
 #!/bin/bash
-# ============================================================
-#  Multitest Pro v3.1 — Git & Production Stable
-# ============================================================
 
-# --- КОНФИГУРАЦИЯ (через переменные среды) ---
-# Токен берется из системы: export MY_TG_TOKEN="содержимое"
-TG_TOKEN="${MY_TG_TOKEN}"
+# Чтение аргументов: запуск будет выглядеть так: ./multitest.sh ВАШ_ТОКЕН
+TG_TOKEN="${1:-$TG_TOKEN}"  # Берет из первого аргумента или из переменной окружения
 TG_CHAT_ID="-1002350577710"
 TG_THREAD_ID="2122"
 
-# 1. Сбор данных окружения
-IP_ADDR=$(curl -s --connect-timeout 5 eth0.me || echo "no_ip")
-HOST_NAME=$(hostname)
-DATE_NOW=$(date +%Y%m%d_%H%M)
-LOG_FILE="${HOST_NAME}_${IP_ADDR}_${DATE_NOW}.log"
+# --- Сбор данных ---
+hostname=$(hostname)
+ip_address=$(curl -s https://api.ipify.org)
+# Собираем данные о локации
+geo_data=$(curl -s ipapi.co/json/)
+location=$(echo "$geo_data" | jq -r '"\(.country_name), \(.city)"')
+isp=$(echo "$geo_data" | jq -r '.org')
 
-# Функция логирования (вывод на экран + запись в файл)
-log_run() {
-    echo -e "\n\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[1;37m  >>> $1\033[0m"
-    echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
-    
-    echo -e "\n>>> $1\n" >> "$LOG_FILE"
-    # Запуск. tee позволяет тебе взаимодействовать с меню (нажимать 2, 0 и т.д.)
-    eval "$2" 2>&1 | tee -a "$LOG_FILE"
-}
+echo -e "Запуск тестов для $hostname ($ip_address)..."
 
-# --- ПРОВЕРКА ЗАВИСИМОСТЕЙ ---
-clear
-echo -e "\033[1;32mSTARTING MULTITEST v3.1 (Git Edition)\033[0m"
-echo -e "Target Log: $LOG_FILE\n"
+# [Тут идет ваш основной блок тестов: sysbench, iperf3 и т.д.]
+# Допустим, мы сохранили важные цифры в переменные:
+# cpu_score, speed_msk, ping_msk
 
-# Снимаем блокировки APT, если они остались от фоновых апдейтов
-rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock 2>/dev/null
+# --- Формирование сообщения ---
+# Используем HTML парсинг, он стабильнее Markdown при наличии спецсимволов в именах провайдеров
+MESSAGE="<b>🚀 VPS VPN REPORT</b>
+<b>------------------------------</b>
+<b>🖥 Host:</b> <code>$hostname</code>
+<b>🌐 IP:</b> <code>$ip_address</code>
+<b>📍 Loc:</b> $location
+<b>🏢 ISP:</b> $isp
 
-# --- ЦИКЛ ТЕСТОВ ---
+<b>⚡ Speed (MSK):</b> $speed_msk Mbps
+<b>⏱ Ping:</b> ${ping_msk}ms
+<b>🧠 CPU Power:</b> $cpu_score ev/s
 
-log_run "System Tools" "apt-get update && apt-get install -y curl wget sysbench iperf3"
+<b>📊 Verdict:</b> $VERDICT
+<b>------------------------------</b>"
 
-log_run "IP Region" "bash <(curl -sL https://ipregion.vrnt.xyz)"
-
-log_run "Geoblock Check" "bash <(curl -sL https://github.com/vernette/censorcheck/raw/master/censorcheck.sh) --mode geoblock"
-
-# В ЭТОМ МЕСТЕ НУЖНО БУДЕТ РУКАМИ НАЖАТЬ "2", А ПОТОМ "0"
-log_run "IP Quality Check" "bash <(curl -Ls https://Check.Place) -E"
-
-log_run "Hardware Bench" "wget -qO- bench.sh | bash"
-
-log_run "YABS (Disk/Network)" "curl -sL yabs.sh | bash -s -- -4 -i -9"
-
-log_run "iPerf3 Russian Servers" "bash <(curl -sL https://github.com/itdoginfo/russian-iperf3-servers/raw/main/speedtest.sh)"
-
-log_run "CPU Performance" "sysbench cpu run --threads=1"
-
-# --- ОТПРАВКА РЕЗУЛЬТАТОВ ---
-if [ ! -z "$TG_TOKEN" ]; then
-    echo -e "\n\033[0;33mSending report to Telegram...\033[0m"
-    
-    # Сообщение о завершении
+# --- Отправка в Telegram ---
+if [ -n "$TG_TOKEN" ]; then
     curl -s -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
-        -d "chat_id=$TG_CHAT_ID" -d "message_thread_id=$TG_THREAD_ID" \
-        -d "text=✅ Test Complete: $HOST_NAME ($IP_ADDR)" > /dev/null
-    
-    # Отправка лога
-    curl -s -F chat_id="$TG_CHAT_ID" -F message_thread_id="$TG_THREAD_ID" \
-         -F document=@"$LOG_FILE" \
-         "https://api.telegram.org/bot$TG_TOKEN/sendDocument" > /dev/null
-    
-    echo -e "\033[0;32mDone. Report sent.\033[0m"
+        -d "chat_id=$TG_CHAT_ID" \
+        -d "message_thread_id=$TG_THREAD_ID" \
+        -d "parse_mode=HTML" \
+        -d "text=$MESSAGE" > /dev/null
+    echo "Отчет отправлен в Telegram (Topic ID: $TG_THREAD_ID)"
 else
-    echo -e "\n\033[0;31mSkip TG: MY_TG_TOKEN is not set.\033[0m"
+    echo "Ошибка: TG_TOKEN не найден. Запустите: ./multitest.sh ВАШ_ТОКЕН"
 fi
-
-echo -e "\n\033[1;32mFINISH! Log saved to: $LOG_FILE\033[0m"
