@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # --- КОНФИГУРАЦИЯ TELEGRAM ---
-# Токен передается первым аргументом при запуске: bash multitest.sh TOKEN
 TG_TOKEN="${1}"
 TG_CHAT_ID="-1002350577710"
 TG_THREAD_ID="2122"
@@ -15,67 +14,55 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 echo -e "${BLUE}====================================================${NC}"
-echo -e "${BLUE}   VPN Node Professional Analyzer v2.0              ${NC}"
+echo -e "${BLUE}   VPN Node Professional Analyzer v2.1              ${NC}"
 echo -e "${BLUE}====================================================${NC}"
 
-# 1. Установка необходимых инструментов
+# 1. Установка инструментов
 echo -e "\n${CYAN}>>> Установка зависимостей...${NC}"
 apt-get update -qq
 apt-get install -y -qq curl wget sysbench iperf3 bc jq > /dev/null 2>&1
 
-# Исправленная установка Speedtest (Ookla)
-if ! command -v speedtest &> /dev/null; then
-    curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | bash > /dev/null 2>&1
-    apt-get install -y speedtest > /dev/null 2>&1
-fi
-
 # 2. Сбор системной информации
 hostname=$(hostname)
 ip_address=$(curl -s https://api.ipify.org)
-geo_data=$(curl -s https://ipapi.co/json/)
+geo_data=$(curl -s https://ipapi.co/json/ -H "User-Agent: curl/7.64.1")
 location=$(echo "$geo_data" | jq -r '"\(.country_name), \(.city)"')
 isp=$(echo "$geo_data" | jq -r '.org')
 
-echo -e "Host: ${YELLOW}$hostname${NC}"
-echo -e "IP:   ${YELLOW}$ip_address${NC}"
-echo -e "Loc:  ${YELLOW}$location${NC}"
-
-# 3. Тест производительности CPU (Критично для VPN)
-echo -e "\n${CYAN}>>> Тестирование CPU (Crypto performance)...${NC}"
+# 3. Тест производительности CPU
+echo -e "\n${CYAN}>>> Тестирование CPU...${NC}"
 cpu_val=$(sysbench cpu --cpu-max-prime=10000 run | grep "events per second:" | awk '{print $4}')
-echo -e "Score: ${YELLOW}$cpu_val ev/s${NC}"
 
-# 4. Тест сетевых каналов (Россия)
-echo -e "\n${CYAN}>>> Тестирование скорости (РФ, iperf3)...${NC}"
-# Пробуем Москву (itdoginfo)
-iperf_res=$(iperf3 -c moscow.iperf.itdog.info -t 5 -R --json)
-if [[ -z "$iperf_res" ]]; then
-    # Резервный сервер, если основной недоступен
-    iperf_res=$(iperf3 -c spb.iperf.itdog.info -t 5 -R --json)
+# 4. Тест сетевых каналов (iperf3)
+echo -e "\n${CYAN}>>> Тестирование скорости (MSK)...${NC}"
+# Запускаем iperf3 и сохраняем результат в переменную
+iperf_json=$(iperf3 -c moscow.iperf.itdog.info -t 5 -R --json)
+
+# Если Москва недоступна, пробуем Питер
+if [[ -z "$iperf_json" || "$iperf_json" == *"error"* ]]; then
+    iperf_json=$(iperf3 -c spb.iperf.itdog.info -t 5 -R --json)
 fi
 
-speed_bps=$(echo "$iperf_res" | jq '.end.sum_received.bits_per_second // 0')
+# Извлекаем данные из JSON
+speed_bps=$(echo "$iperf_json" | jq '.end.sum_received.bits_per_second // 0')
 speed_msk=$(echo "scale=2; $speed_bps / 1024 / 1024" | bc)
-ping_msk=$(echo "$iperf_res" | jq '.start.connected[0].seconds // 0' | awk '{print $1*1000}')
+ping_msk=$(echo "$iperf_json" | jq '.start.connected[0].seconds // 0' | awk '{print $1*1000}')
 
-echo -e "Speed: ${YELLOW}$speed_msk Mbps${NC}"
-echo -e "Ping:  ${YELLOW}${ping_msk}ms${NC}"
-
-# 5. Проверка репутации IP (Google Captcha Test)
+# 5. Проверка репутации IP
 google_status=$(curl -sL --max-time 5 "https://www.google.com/search?q=test" -A "Mozilla/5.0" | grep -c "detected unusual traffic")
 if [ "$google_status" -gt 0 ]; then
-    ip_rep="🔴 Bad (High Fraud Score)"
+    ip_rep="🔴 Bad (Proxy/Captcha)"
     ip_label="Bad"
 else
-    ip_rep="🟢 Clean (Low Risk)"
+    ip_rep="🟢 Clean"
     ip_label="Clean"
 fi
 
-# 6. Итоговый вердикт (Commercial Grade)
+# 6. Вердикт
 if (( $(echo "$cpu_val > 4500" | bc -l) )) && (( $(echo "$speed_msk > 400" | bc -l) )) && [ "$ip_label" == "Clean" ]; then
     VERDICT="⭐ TOP TIER (Commercial Ready)"
     EMOJI="💎"
-elif (( $(echo "$cpu_val > 2500" | bc -l) )); then
+elif (( $(echo "$cpu_val > 2000" | bc -l) )); then
     VERDICT="✅ GOOD (Stable Private)"
     EMOJI="🛡️"
 else
@@ -83,10 +70,11 @@ else
     EMOJI="🚫"
 fi
 
-# 7. Отправка отчета в Telegram
+# 7. Отправка в Telegram
 if [ -n "$TG_TOKEN" ]; then
-    echo -e "\n${CYAN}>>> Отправка отчета в Telegram...${NC}"
+    echo -e "${CYAN}>>> Отправка отчета в Telegram...${NC}"
     
+    # Формируем текст сообщения
     MESSAGE="<b>$EMOJI VPN NODE REPORT $EMOJI</b>
 <b>------------------------------</b>
 <b>🖥 Host:</b> <code>$hostname</code>
@@ -107,16 +95,11 @@ if [ -n "$TG_TOKEN" ]; then
         -d "message_thread_id=$TG_THREAD_ID" \
         -d "parse_mode=HTML" \
         -d "text=$MESSAGE" > /dev/null
-    
-    echo -e "${GREEN}Готово! Отчет отправлен в ветку $TG_THREAD_ID${NC}"
 else
-    echo -e "\n${YELLOW}Внимание: TG_TOKEN не указан. Отчет только в терминале.${NC}"
+    echo -e "${RED}Ошибка: Токен не указан!${NC}"
 fi
 
-# 8. Запуск доп. проверок (стриминг и т.д.)
-echo -e "\n${CYAN}>>> Расширенная проверка регионов...${NC}"
-bash <(curl -L -s https://raw.githubusercontent.com/lmc999/RegionCheck/main/check.sh)
-
-echo -e "\n${BLUE}====================================================${NC}"
-echo -e "${BLUE}          Тестирование завершено!                   ${NC}"
-echo -e "${BLUE}====================================================${NC}"
+# 8. Финальный вывод в консоль для красоты
+echo -e "Speed: $speed_msk Mbps"
+echo -e "CPU:   $cpu_val ev/s"
+echo -e "Готово!"
