@@ -1,72 +1,75 @@
 #!/bin/bash
 # ============================================================
-#  Multitest Pro v2.5 — Zero Interaction Edition
+#  Multitest Pro v3.1 — Git & Production Stable
 # ============================================================
 
+# --- КОНФИГУРАЦИЯ (через переменные среды) ---
+# Токен берется из системы: export MY_TG_TOKEN="содержимое"
+TG_TOKEN="${MY_TG_TOKEN}"
 TG_CHAT_ID="-1002350577710"
 TG_THREAD_ID="2122"
 
-# 1. Глобальные настройки анти-интерактива
-export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a
-export APT_LISTCHANGES_FRONTEND=none
-
+# 1. Сбор данных окружения
 IP_ADDR=$(curl -s --connect-timeout 5 eth0.me || echo "no_ip")
-LOG_FILE="$(hostname)_${IP_ADDR}_$(date +%Y%m%d_%H%M).log"
+HOST_NAME=$(hostname)
+DATE_NOW=$(date +%Y%m%d_%H%M)
+LOG_FILE="${HOST_NAME}_${IP_ADDR}_${DATE_NOW}.log"
 
-log() { echo -e "$1" | tee -a "$LOG_FILE"; }
-
-# Улучшенная функция запуска с авто-ответом "Enter"
-run() {
-    log "\n\033[1;36m>>> $1\033[0m"
-    # timeout убивает процесс если он завис на 7 минут
-    # printf '\n' подает Enter если скрипт выкинул меню
-    timeout 420s bash -c "printf '\n\n\n\n' | $2" 2>&1 | tee -a "$LOG_FILE"
+# Функция логирования (вывод на экран + запись в файл)
+log_run() {
+    echo -e "\n\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[1;37m  >>> $1\033[0m"
+    echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
+    
+    echo -e "\n>>> $1\n" >> "$LOG_FILE"
+    # Запуск. tee позволяет тебе взаимодействовать с меню (нажимать 2, 0 и т.д.)
+    eval "$2" 2>&1 | tee -a "$LOG_FILE"
 }
 
-# --- ПОДГОТОВКА ---
+# --- ПРОВЕРКА ЗАВИСИМОСТЕЙ ---
 clear
-log "\033[1;32mЗАПУСК v2.5. Все меню будут пройдены автоматически.\033[0m"
+echo -e "\033[1;32mSTARTING MULTITEST v3.1 (Git Edition)\033[0m"
+echo -e "Target Log: $LOG_FILE\n"
 
-# Очистка блокировок APT
-systemctl stop unattended-upgrades 2>/dev/null
-killall apt apt-get dpkg 2>/dev/null
-rm -f /var/lib/dpkg/lock-frontend /etc/apt/sources.list.d/ookla_speedtest-cli.list
-dpkg --configure -a
+# Снимаем блокировки APT, если они остались от фоновых апдейтов
+rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock 2>/dev/null
 
-log "Установка инструментов..."
-apt-get update -qq || true
-apt-get install -y -qq curl wget sysbench iperf3 dnsutils < /dev/null > /dev/null 2>&1
+# --- ЦИКЛ ТЕСТОВ ---
 
-# --- ТЕСТЫ С АВТО-ОТВЕТАМИ ---
+log_run "System Tools" "apt-get update && apt-get install -y curl wget sysbench iperf3"
 
-# IP Region обычно не просит ввода
-run "IP Region" "bash <(curl -sL https://ipregion.vrnt.xyz)"
+log_run "IP Region" "bash <(curl -sL https://ipregion.vrnt.xyz)"
 
-# Censorcheck - подаем Enter на случай вопросов
-run "Censorcheck" "bash <(curl -sL https://github.com/vernette/censorcheck/raw/master/censorcheck.sh) --mode geoblock"
+log_run "Geoblock Check" "bash <(curl -sL https://github.com/vernette/censorcheck/raw/master/censorcheck.sh) --mode geoblock"
 
-# IP.Check.Place - КРИТИЧНО: добавляем -l en и подаем Enter
-run "IP.Check.Place" "bash <(curl -sL IP.Check.Place) -l en"
+# В ЭТОМ МЕСТЕ НУЖНО БУДЕТ РУКАМИ НАЖАТЬ "2", А ПОТОМ "0"
+log_run "IP Quality Check" "bash <(curl -Ls https://Check.Place) -E"
 
-# IP Quality - используем флаги если они есть
-run "IP Quality" "bash <(curl -sL https://Check.Place) -EI"
+log_run "Hardware Bench" "wget -qO- bench.sh | bash"
 
-# Bench.sh - стандартный скрипт
-run "Bench.sh" "wget -qO- bench.sh | bash"
+log_run "YABS (Disk/Network)" "curl -sL yabs.sh | bash -s -- -4 -i -9"
 
-# YABS - здесь уже есть флаги -i (игнор) и -9 (пропуск Geobench)
-run "YABS" "curl -sL yabs.sh | bash -s -- -4 -i -9"
+log_run "iPerf3 Russian Servers" "bash <(curl -sL https://github.com/itdoginfo/russian-iperf3-servers/raw/main/speedtest.sh)"
 
-# iPerf3 RU - подаем Enter
-run "iPerf3 RU" "bash <(curl -sL https://github.com/itdoginfo/russian-iperf3-servers/raw/main/speedtest.sh)"
+log_run "CPU Performance" "sysbench cpu run --threads=1"
 
-# Sysbench - чисто консольная утилита
-run "Sysbench CPU" "sysbench cpu run --threads=1"
-
-# --- TG ---
-if [ ! -z "$MY_TG_TOKEN" ]; then
-    curl -s -F chat_id="$TG_CHAT_ID" -F message_thread_id="$TG_THREAD_ID" -F document=@"$LOG_FILE" "https://api.telegram.org/bot$MY_TG_TOKEN/sendDocument" > /dev/null
+# --- ОТПРАВКА РЕЗУЛЬТАТОВ ---
+if [ ! -z "$TG_TOKEN" ]; then
+    echo -e "\n\033[0;33mSending report to Telegram...\033[0m"
+    
+    # Сообщение о завершении
+    curl -s -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+        -d "chat_id=$TG_CHAT_ID" -d "message_thread_id=$TG_THREAD_ID" \
+        -d "text=✅ Test Complete: $HOST_NAME ($IP_ADDR)" > /dev/null
+    
+    # Отправка лога
+    curl -s -F chat_id="$TG_CHAT_ID" -F message_thread_id="$TG_THREAD_ID" \
+         -F document=@"$LOG_FILE" \
+         "https://api.telegram.org/bot$TG_TOKEN/sendDocument" > /dev/null
+    
+    echo -e "\033[0;32mDone. Report sent.\033[0m"
+else
+    echo -e "\n\033[0;31mSkip TG: MY_TG_TOKEN is not set.\033[0m"
 fi
 
-log "\n\033[1;32mГОТОВО! Лог доведен до конца.\033[0m"
+echo -e "\n\033[1;32mFINISH! Log saved to: $LOG_FILE\033[0m"
